@@ -1,186 +1,151 @@
-# British Auction RFQ System
+# 🚀 BidForge: British-Style Reverse Auction System
 
-A full-stack **British-style reverse auction** platform where buyers post RFQs and suppliers compete by submitting increasingly lower bids. The auction auto-extends when activity occurs within a configurable trigger window, always capped at a hard `forced_close_time`.
+A high-performance, full-stack **British-style reverse auction** platform. Buyers post Requests for Quotations (RFQs), and suppliers compete in real-time by submitting increasingly lower bids. The system ensures fairness through intelligent auto-extension logic and strict transactional integrity.
 
 ---
 
-## Tech Stack
+## 🎯 Why BidForge?
+
+Traditional RFQ systems are static and inefficient. **BidForge** transforms procurement into a dynamic marketplace where:
+* **Suppliers** actively compete in real-time for the L1 (lowest) position.
+* **Buyers** secure the best possible market price.
+* **Concurrency Control** prevents race conditions during high-intensity bidding wars.
+
+---
+
+## 🏗 Tech Stack
 
 | Layer | Technology |
-|-------|-----------|
-| Backend | Django 5 + Django REST Framework |
-| Database | PostgreSQL |
-| Frontend | React (Vite) + Tailwind CSS v4 |
-| Auth | JWT (djangorestframework-simplejwt) |
+| :--- | :--- |
+| **Backend** | Django 5 + Django REST Framework |
+| **Database** | PostgreSQL 14+ |
+| **Frontend** | React (Vite) + Tailwind CSS v4 |
+| **Auth** | JWT (djangorestframework-simplejwt) |
 
 ---
 
-## Prerequisites
+## ✨ Key System Features
 
-- Python 3.10+
-- Node.js 18+
-- PostgreSQL 14+
-
----
-
-## Setup — Backend
-
-### 1. Create PostgreSQL Database
-
-```sql
-CREATE DATABASE rfq_db;
-CREATE USER postgres WITH PASSWORD 'postgres';
-GRANT ALL PRIVILEGES ON DATABASE rfq_db TO postgres;
-```
-
-### 2. Python Environment
-
-```bash
-cd "RQF System"
-python3 -m venv venv
-source venv/bin/activate        # Windows: venv\Scripts\activate
-pip install -r backend/requirements.txt
-```
-
-### 3. Environment Config
-
-```bash
-cp backend/.env.example backend/.env
-# Edit backend/.env with your DB credentials and secret key
-```
-
-### 4. Migrations + Admin
-
-```bash
-cd backend
-python manage.py migrate
-python manage.py createsuperuser   # optional
-```
-
-### 5. Seed Sample Data
-
-```bash
-cd backend
-python sample_data.py
-```
-
-Credentials after seeding:
-| Role | Email | Password |
-|------|-------|----------|
-| Buyer | buyer@demo.com | demo1234 |
-| Supplier 1 | supplier1@demo.com | demo1234 |
-| Supplier 2 | supplier2@demo.com | demo1234 |
-| Supplier 3 | supplier3@demo.com | demo1234 |
-
-### 6. Run Backend
-
-```bash
-cd backend
-python manage.py runserver
-# API available at http://localhost:8000/api/
-```
+* ⚡ **Real-Time Ranking** – Dynamic L1, L2, L3 updates with timestamp tie-breaking.
+* ⏱ **Auto-Extension (Snipe Protection)** – Auctions extend when activity occurs within the trigger window.
+* 🔒 **Forced Close Time** – A hard "dead-stop" cap to prevent infinite bidding loops.
+* 🧠 **Configurable Triggers**:
+    * `ANY_BID`: Extends on any valid submission.
+    * `ANY_RANK_CHANGE`: Extends if a supplier moves up/down the leaderboard.
+    * `L1_CHANGE`: Extends only if the top leader is dethroned.
+* ⚙️ **Transactional Safety** – Uses `select_for_update` and `atomic()` transactions to handle simultaneous bids.
+* 🧾 **Audit Trail** – Comprehensive activity logging for every bid, rank change, and status transition.
 
 ---
 
-## Setup — Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev
-# UI at http://localhost:5173
-```
-
----
-
-## API Reference
-
-### Auth
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| POST | `/api/auth/register/` | Public | Create account |
-| POST | `/api/auth/login/` | Public | Get JWT tokens + server_time |
-| GET | `/api/auth/me/` | Bearer | Current user + server_time |
-
-### RFQ
-| Method | Endpoint | Role | Description |
-|--------|----------|------|-------------|
-| POST | `/api/rfq/` | Buyer | Create RFQ with auction config |
-| GET | `/api/rfq/?status=active` | Any | List RFQs (filterable, paginated) |
-| GET | `/api/rfq/{id}/` | Any | RFQ detail + server_time |
-
-### Bids
-| Method | Endpoint | Role | Description |
-|--------|----------|------|-------------|
-| POST | `/api/bids/` | Supplier | Submit bid (transactional) |
-| GET | `/api/bids/{rfq_id}/` | Any | Paginated bid list |
-
-### Auction
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| GET | `/api/auction/{rfq_id}/status/` | Any | Full auction state + server_time |
-| GET | `/api/auction/{rfq_id}/ranking/` | Any | Ranked bids (L1, L2, L3…) |
-
-### Logs
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| GET | `/api/logs/{rfq_id}/` | Any | Paginated activity log |
-
-All responses use standard envelope:
-```json
-{ "success": true, "data": {}, "error": null }
-```
-
----
-
-## Auction Rules
+## 🧠 Auction Mechanics & Logic
 
 ### Status Lifecycle
-```
+```text
 draft → scheduled → active → extended → closed
                                       ↘ force_closed
 ```
 
-### Extension Logic
-On every bid submission:
-1. Validate: `bid_start_time ≤ now ≤ forced_close_time`, status must be `active` or `extended`
-2. Save bid inside `transaction.atomic()` + `select_for_update()` on RFQ
-3. Recalculate rankings (ordered by `total_amount ASC`, tiebreak by `created_at ASC`)
-4. Check trigger in window:
-   - `ANY_BID`: always extends if in window
-   - `ANY_RANK_CHANGE`: extends if any supplier's rank changed
-   - `L1_CHANGE`: extends only if the L1 (lowest) supplier changed
-5. Extend: `new_close = min(bid_close + Y, forced_close)`
-6. Log all events to ActivityLog
+### The Bidding Process
+On every bid submission, the backend executes the following:
+1. **Validation**: Checks `bid_start_time ≤ now ≤ forced_close_time`.
+2. **Locking**: Row-level locking on the RFQ to prevent concurrent update conflicts.
+3. **Ranking**: Recalculates the leaderboard based on `total_amount ASC` (Price) and `created_at ASC` (Time).
+4. **Trigger Check**: Evaluates if the bid falls within the "Extension Window" based on the selected trigger mode.
+5. **Extension**: Calculates `new_close = min(current_close + Y_minutes, forced_close)`.
+6. **Time Sync**: All APIs return `server_time` to keep frontend countdowns perfectly aligned.
 
 ---
 
-## Running Tests
+## 🚀 Setup & Installation
 
+### Prerequisites
+- Python 3.10+ | Node.js 18+ | PostgreSQL 14+
+
+### 1. Backend Setup
+```bash
+# Clone and enter directory
+cd "RFQ System"
+python3 -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+
+# Install dependencies
+pip install -r backend/requirements.txt
+
+# Environment Config
+cp backend/.env.example backend/.env
+# Update .env with your PostgreSQL credentials
+
+# Migrations & Data
+cd backend
+python manage.py migrate
+python manage.py createsuperuser  # Optional
+python sample_data.py             # Seed demo data
+python manage.py runserver        # Starts at http://localhost:8000
+```
+
+### 2. Frontend Setup
+```bash
+cd frontend
+npm install
+npm run dev  # Starts at http://localhost:5173
+```
+
+---
+
+## 📦 Credentials after Seeding
+| Role | Email | Password |
+| :--- | :--- | :--- |
+| **Buyer** | `buyer@demo.com` | `demo1234` |
+| **Supplier 1** | `supplier1@demo.com` | `demo1234` |
+| **Supplier 2** | `supplier2@demo.com` | `demo1234` |
+| **Supplier 3** | `supplier3@demo.com` | `demo1234` |
+
+---
+
+## 📊 API Reference
+
+| Category | Method | Endpoint | Description |
+| :--- | :--- | :--- | :--- |
+| **Auth** | POST | `/api/auth/login/` | JWT login + returns `server_time` |
+| **RFQ** | POST | `/api/rfq/` | Create RFQ with auction config (Buyer) |
+| **RFQ** | GET | `/api/rfq/` | List active/scheduled RFQs |
+| **Bids** | POST | `/api/bids/` | Submit bid (Transactional safety) |
+| **Auction** | GET | `/api/auction/{id}/status/` | Live auction state & countdowns |
+| **Auction** | GET | `/api/auction/{id}/ranking/` | Current Leaderboard (L1, L2, L3...) |
+
+---
+
+## 🧪 Testing & Quality
+Run the comprehensive test suite to verify business logic:
 ```bash
 cd backend
 python manage.py test rfq --verbosity=2
 ```
-
-Test coverage:
-- RFQ time validation
-- Ranking with tie-breaking
-- All 3 trigger modes (ANY_BID, ANY_RANK_CHANGE, L1_CHANGE)
-- Forced close cap enforcement
-- Extension audit log verification
-- Status lifecycle transitions
+**Coverage Includes:** Ranking tie-breaking, all 3 trigger modes, forced-close enforcement, and race-condition simulation.
 
 ---
 
-## Git Log
+## 🔮 Future Roadmap
+* **WebSockets**: Implement Django Channels for push-based UI updates.
+* **Analytics**: Buyer dashboard for price trend visualization.
+* **Notifications**: Email alerts for outbid suppliers.
+* **Docker**: Containerized deployment via Docker Compose.
 
-```
-chore: initialize repository
-chore(setup): django project scaffold, settings, env config, CORS, JWT
-feat(models): User, RFQ, AuctionConfig, Bid, ActivityLog — 6-state lifecycle
-feat(auction-logic): split service (ranking, trigger, extension, status)
-feat(tests): full coverage — RFQ, bids, triggers, forced close, status
-chore(frontend): Vite+React, Tailwind, services, hooks, shared components
-feat(frontend): Login, RFQCreate, AuctionListing, AuctionDetail pages
-chore(docs): README, HLD, sample data, requirements.txt
-```
+---
+
+## 🧾 Git Highlights
+
+* Structured commits following feature-based development.
+* Modular auction logic (ranking, trigger, extension, status).
+* Clean separation of backend and frontend concerns.
+
+---
+
+## 🎯 Project Takeaway
+
+BidForge demonstrates real-world system design skills by:
+* Handling **high-concurrency** transactional systems.
+* Designing **time-sensitive** business logic.
+* Building **scalable** full-stack applications.
+* Maintaining **data integrity** under competitive conditions.
